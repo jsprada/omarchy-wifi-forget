@@ -1,0 +1,128 @@
+--- a/Panel.qml
++++ b/Panel.qml
+@@ -130,12 +130,21 @@
+   // radio to switch. On a wired box it would otherwise sit there reading
+   // "off" beside a perfectly live Ethernet connection.
+   readonly property bool canToggleWifi: networkManagerAvailable && wifiStationAvailable
++  // wifi-forget: the hero carries a Forget action for the connected network.
++  // It only makes sense for a saved profile, and an unsaved connection has
++  // nothing to forget.
++  readonly property bool canForgetCurrent: !!connectedWifiNetwork && !!connectedWifiNetwork.known
++  // Forgetting drops the link and throws away the saved passphrase, so the
++  // first press arms the button and the second one commits.
++  property bool forgetArmed: false
+   readonly property int qrHeaderIndex: canShareWifi ? 0 : -1
+   readonly property int speedHeaderIndex: canRunSpeedTest ? (canShareWifi ? 1 : 0) : -1
+-  readonly property int toggleHeaderIndex: canToggleWifi ? (canShareWifi ? 1 : 0) + (canRunSpeedTest ? 1 : 0) : -1
+-  readonly property int headerActionCount: (canShareWifi ? 1 : 0) + (canRunSpeedTest ? 1 : 0) + (canToggleWifi ? 1 : 0)
++  readonly property int forgetHeaderIndex: canForgetCurrent ? (canShareWifi ? 1 : 0) + (canRunSpeedTest ? 1 : 0) : -1
++  readonly property int toggleHeaderIndex: canToggleWifi ? (canShareWifi ? 1 : 0) + (canRunSpeedTest ? 1 : 0) + (canForgetCurrent ? 1 : 0) : -1
++  readonly property int headerActionCount: (canShareWifi ? 1 : 0) + (canRunSpeedTest ? 1 : 0) + (canForgetCurrent ? 1 : 0) + (canToggleWifi ? 1 : 0)
+   readonly property bool qrHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === qrHeaderIndex
+   readonly property bool speedHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === speedHeaderIndex
++  readonly property bool forgetHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === forgetHeaderIndex
+   readonly property bool toggleHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === toggleHeaderIndex
+   readonly property string toggleHint: Networking.wifiEnabled ? "Turn Wi-Fi off" : "Turn Wi-Fi on"
+   readonly property var dnsProviders: ["DHCP", "Cloudflare", "Google", "Custom"]
+@@ -225,9 +234,42 @@
+   function activateHeader() {
+     if (headerIndex === qrHeaderIndex) summonWifiQr()
+     else if (headerIndex === speedHeaderIndex) summonSpeedTest()
++    else if (headerIndex === forgetHeaderIndex) armOrForgetCurrent()
+     else if (headerIndex === toggleHeaderIndex) toggleNetwork()
+   }
+ 
++  function disarmForget() {
++    forgetArmTimer.stop()
++    forgetArmed = false
++  }
++
++  function armOrForgetCurrent() {
++    if (!canForgetCurrent || busy) return
++    if (!forgetArmed) {
++      forgetArmed = true
++      forgetArmTimer.restart()
++      return
++    }
++    disarmForget()
++    forgetCurrent()
++  }
++
++  // Deleting the active profile is what drops the link: NetworkManager
++  // deactivates a connection whose settings disappear, so forget() alone both
++  // disconnects and removes the saved credentials.
++  function forgetCurrent() {
++    runNetworkAction("forget", connectedWifiNetwork, function(network) { network.forget() })
++  }
++
++  onConnectedWifiNetworkChanged: disarmForget()
++
++  Timer {
++    id: forgetArmTimer
++    interval: 4000
++    repeat: false
++    onTriggered: root.forgetArmed = false
++  }
++
+   function setHeaderCursor(index) {
+     cursorActive = true
+     focusSection = "header"
+@@ -332,6 +374,7 @@
+       // the 100ms window reuses the running timer and re-enables the scanner
+       // almost immediately, undoing the deferral #6605 restored.
+       scanRestart.stop()
++      disarmForget()
+       // Reset throughput tracking so the next open doesn't compute a fake
+       // rate from a sample taken minutes ago.
+       prevSampleTime = 0
+@@ -1073,6 +1116,7 @@
+       onTextKey: function(t) {
+         if (t === "r" || t === "R") root.refresh()
+         else if (t === "w" || t === "W") root.toggleNetwork()
++        else if (t === "f" || t === "F") root.armOrForgetCurrent()
+       }
+ 
+     Column {
+@@ -1140,6 +1184,27 @@
+             onClicked: root.summonSpeedTest()
+           }
+ 
++          Button {
++            id: forgetAction
++            visible: root.canForgetCurrent
++            iconText: root.forgetArmed ? "󰅙" : "󰆴"
++            tooltipText: root.forgetArmed
++              ? "Click again to forget " + (root.connectedWifiNetwork ? root.connectedWifiNetwork.name : "this network")
++              : "Forget this network"
++            foreground: root.forgetArmed ? root.bar.urgent : root.bar.foreground
++            fontFamily: root.bar.fontFamily
++            iconSize: Style.font.subtitle * 1.5
++            horizontalPadding: Style.space(5)
++            verticalPadding: Style.space(2)
++            hasCursor: root.forgetHeaderHasCursor
++            Layout.alignment: Qt.AlignVCenter
++            onHovered: function(on) {
++              if (on) root.setHeaderCursor(root.forgetHeaderIndex)
++              else root.disarmForget()
++            }
++            onClicked: root.armOrForgetCurrent()
++          }
++
+           ToggleSwitch {
+             id: powerSwitch
+             visible: root.canToggleWifi
+--- a/Model.js
++++ b/Model.js
+@@ -308,8 +308,11 @@
+   return security !== openSecurity && security !== oweSecurity
+ }
+ 
++// wifi-forget: upstream only allows forgetting saved networks you are not on.
++// Forgetting the connected network drops the link as NetworkManager deletes the
++// active profile, so any saved network qualifies.
+ function canForgetNetwork(network) {
+-  return !!(network && network.known && !network.connected)
++  return !!(network && network.known)
+ }
+ 
+ // The password arrives on stdin and reaches nmcli through the scriptable

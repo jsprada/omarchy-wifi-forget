@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "johnny.wifi-forget",
+  "name": "Network (with Forget)",
+  "version": "1.0.0",
+  "author": "Johnny Sprada",
+  "license": "MIT",
+  "description": "Omarchy's network panel with a Forget button that drops the connected Wi-Fi network and deletes its saved profile",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Network (with Forget)",
+    "description": "Wi-Fi list and connection state, plus Forget for the connected network",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.network"
+  },
+  "homepage": "https://github.com/jsprada/omarchy-wifi-forget"
+}
